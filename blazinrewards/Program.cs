@@ -8,6 +8,10 @@ using System.Threading.Tasks;
 using HtmlAgilityPack;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading;
+
 namespace blazinrewards
 {
 	class Program
@@ -19,16 +23,90 @@ namespace blazinrewards
 
 		static void Main(string[] args)
 		{
-			using (HttpClient client = new HttpClient())
+			Console.Write("How many codes do you want to generate? ");
+
+			if (!int.TryParse(Console.ReadLine(), out int amount))
 			{
-				//Im a good programmer!!
-				if (RegisterAccount(client)
-					&& DoSurvey(client)
-					&& GimmeCode(client))
+				Console.WriteLine("Invalid amount");
+				goto wait;
+			}
+
+			var emails = new List<string>();
+
+			for (int i = 0; i < amount; i++)
+			{
+				using (HttpClient client = new HttpClient())
 				{
-					Console.WriteLine("got dat code!!!");
+					//Im a good programmer!!
+					if (RegisterAccount(client, out string email)
+						&& DoSurvey(client)
+						&& GimmeCode(client))
+					{
+						emails.Add(email);
+					}
 				}
 			}
+			
+			Console.WriteLine("Trying to grab codes... (~5 seconds)");
+			Thread.Sleep(5000);
+
+			var handle = File.Open("codes.txt", FileMode.OpenOrCreate | FileMode.Append);
+
+			using (var writer = new StreamWriter(handle))
+			{
+				//Let's look up the emails now that they've had time to send
+				foreach (var email in emails)
+				{
+					var code = GetCodeFromEmail(email) ?? "Unable to fetch";
+					Console.WriteLine($"{email}'s CODE: { code }");
+					writer.WriteLine($"{email}: {code}");
+					Thread.Sleep(5000);
+				}
+
+				writer.Close();
+			}
+			handle.Close();
+
+			wait:
+			Console.WriteLine("I AM DONE!");
+			Console.ReadLine();
+		}
+
+		static string GetCodeFromEmail(string email)
+		{
+			var baseAddress = new Uri("https://temp-mail.org/en/");
+			var cookieContainer = new CookieContainer();
+			using (var handler = new HttpClientHandler() { CookieContainer = cookieContainer })
+			using (HttpClient client = new HttpClient(handler) {BaseAddress = baseAddress } )
+			{
+				cookieContainer.Add(baseAddress, new Cookie("mail", email));
+				var response = client.GetAsync("https://temp-mail.org/en/").Result;
+				var html = response.Content.ReadAsStringAsync().Result;
+				var doc = new HtmlDocument();
+				doc.LoadHtml(html);
+
+				var subjects = doc.DocumentNode.SelectNodes("//a[@class='title-subject']");
+				if (subjects == null)
+				{
+					return null;
+				}
+
+				var codEmail = subjects.Where(a => a.InnerText.Contains("Call of")).FirstOrDefault();
+
+				if (codEmail == null)
+				{
+					return null;
+				}
+
+				response = client.GetAsync(codEmail.Attributes["href"].Value).Result;
+				doc.LoadHtml(response.Content.ReadAsStringAsync().Result);
+
+				//The email is retarded so try some hack here
+				var code = doc.DocumentNode.SelectNodes("//td").ToList().LastOrDefault(a => Regex.IsMatch(a.InnerText, @"[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}"));
+
+				return code.InnerText.Trim();
+			}
+
 		}
 
 		private static bool GimmeCode(HttpClient client)
@@ -85,7 +163,7 @@ namespace blazinrewards
 			return true;
 		}
 
-		static bool RegisterAccount(HttpClient client)
+		static bool RegisterAccount(HttpClient client, out string email)
 		{
 			//We need this csrf token for the requests
 			var resp = client.GetAsync(REGISTER_URL).Result.Content.ReadAsStringAsync().Result;
@@ -95,7 +173,7 @@ namespace blazinrewards
 
 			var csrfToken = doc.DocumentNode.SelectNodes("//input[@name='__RequestVerificationToken']").FirstOrDefault().Attributes["value"].Value;
 
-			var email = GenerateEmail();
+			email = GenerateEmail();
 
 			var form = new Dictionary<string, string>
 				{
@@ -126,7 +204,7 @@ namespace blazinrewards
 				return false;
 			}
 
-			Console.WriteLine($"Credentials: Email: {email}, Password: 9yIoYwh5GOZu8ki");
+			Console.WriteLine($"Email: {email}, Password: 9yIoYwh5GOZu8ki");
 
 			return true;
 		}
