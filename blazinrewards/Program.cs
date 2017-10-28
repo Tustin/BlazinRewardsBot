@@ -23,6 +23,9 @@ namespace blazinrewards
 
 		static void Main(string[] args)
 		{
+
+
+
 			Console.Write("How many codes do you want to generate? ");
 
 			if (!int.TryParse(Console.ReadLine(), out int amount))
@@ -32,6 +35,7 @@ namespace blazinrewards
 			}
 
 			var emails = new List<string>();
+			var codes = new List<string>();
 
 			for (int i = 0; i < amount; i++)
 			{
@@ -46,9 +50,9 @@ namespace blazinrewards
 					}
 				}
 			}
-			
-			Console.WriteLine("Trying to grab codes... (~5 seconds)");
-			Thread.Sleep(5000);
+
+			Console.WriteLine("Trying to grab codes... (~15 seconds)");
+			Thread.Sleep(15000);
 
 			var handle = File.Open("codes.txt", FileMode.OpenOrCreate | FileMode.Append);
 
@@ -57,9 +61,13 @@ namespace blazinrewards
 				//Let's look up the emails now that they've had time to send
 				foreach (var email in emails)
 				{
-					var code = GetCodeFromEmail(email) ?? "Unable to fetch";
-					Console.WriteLine($"{email}'s CODE: { code }");
-					writer.WriteLine($"{email}: {code}");
+					var code = GetCodeFromEmail(email);
+					Console.WriteLine($"{email}'s CODE: { code ?? "Unable to fetch" }");
+					if (code != null)
+					{
+						writer.WriteLine($"{email}: {code}");
+						codes.Add(code);
+					}
 					Thread.Sleep(5000);
 				}
 
@@ -67,9 +75,77 @@ namespace blazinrewards
 			}
 			handle.Close();
 
+			Console.Write("Try to redeem codes automatically? (y/n): ");
+			if (Console.ReadLine() == "n") goto wait;
+			Console.Write("Enter Activision username: ");
+			var username = Console.ReadLine();
+			Console.Write("Enter Activision password: ");
+			var password = Console.ReadLine();
+
+			using (HttpClient client = new HttpClient())
+			{
+				//Visit to get the cookies
+				var aa = client.GetAsync("https://profile.callofduty.com/cod/login").Result;
+				if (CodLogin(client, username, password))
+				{
+					Console.WriteLine("Successfully logged into COD website!");
+					Console.WriteLine($"\r\nTrying to redeem {codes.Count} codes NOW");
+					foreach (var code in codes)
+					{
+						if (TryRedeeming(client, code))
+						{
+							Console.WriteLine($"REDEEMED CODE: {code}");
+						}
+						else
+						{
+							Console.WriteLine($"FAILED redeeming {code}. Invalid or maybe limit reached?");
+						}
+					}
+				}
+			}
+
+
 			wait:
 			Console.WriteLine("I AM DONE!");
 			Console.ReadLine();
+		}
+
+		static bool CodLogin(HttpClient client, string username, string password)
+		{
+			var form = new Dictionary<string, string>
+				{
+					{ "username", username },
+					{ "remember_me", "true" },
+					{ "password", password },
+				};
+
+			var content = new FormUrlEncodedContent(form);
+			var response = client.PostAsync("https://profile.callofduty.com/do_login?new_SiteId=cod", content).Result;
+
+			if (response.RequestMessage.RequestUri.ToString().Contains("failure"))
+			{
+				Console.WriteLine("Invalid Activision login");
+				return false;
+			}
+
+			return true;
+		}
+
+		static bool TryRedeeming(HttpClient client, string code)
+		{
+			var form = new Dictionary<string, string>()
+			{
+				{"code",  code}
+			};
+
+			var content = new FormUrlEncodedContent(form);
+			var response = client.PostAsync("https://profile.callofduty.com/promotions/redeem/cod/bww", content).Result;
+			var html = response.Content.ReadAsStringAsync().Result;
+			var doc = new HtmlDocument();
+			doc.LoadHtml(html);
+
+			var success = doc.DocumentNode.SelectSingleNode("//section[@class='success-container']");
+			return success != null;
 		}
 
 		static string GetCodeFromEmail(string email)
@@ -77,7 +153,7 @@ namespace blazinrewards
 			var baseAddress = new Uri("https://temp-mail.org/en/");
 			var cookieContainer = new CookieContainer();
 			using (var handler = new HttpClientHandler() { CookieContainer = cookieContainer })
-			using (HttpClient client = new HttpClient(handler) {BaseAddress = baseAddress } )
+			using (HttpClient client = new HttpClient(handler) { BaseAddress = baseAddress })
 			{
 				cookieContainer.Add(baseAddress, new Cookie("mail", email));
 				var response = client.GetAsync("https://temp-mail.org/en/").Result;

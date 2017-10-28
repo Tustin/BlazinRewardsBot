@@ -7,7 +7,7 @@
     <ProjectGuid>{D0394716-1107-4ABB-B4F9-6E3E5162F1C5}</ProjectGuid>
     <OutputType>Exe</OutputType>
     <RootNamespace>blazinrewards</RootNamespace>
-    <AssemblyName>blazinrewards</AssemblyName>
+    <AssemblyName>WW2 Double XP Generator</AssemblyName>
     <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -30,6 +30,9 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ApplicationIcon>cod_wwii___icon_2_by_blagoicons-db7aaf7.png.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="HtmlAgilityPack, Version=1.6.2.0, Culture=neutral, PublicKeyToken=bd319b19eaf3b43a, processorArchitecture=MSIL">
@@ -54,6 +57,9 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="cod_wwii___icon_2_by_blagoicons-db7aaf7.png.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
