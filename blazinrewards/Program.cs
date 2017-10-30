@@ -11,6 +11,7 @@ using Newtonsoft.Json.Linq;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Configuration;
 
 namespace blazinrewards
 {
@@ -23,9 +24,15 @@ namespace blazinrewards
 
 		static void Main(string[] args)
 		{
-
-
-
+			Console.Title = $"WWII Double XP Generator by { ConfigurationManager.AppSettings["creator"]} - Twitter { ConfigurationManager.AppSettings["twitter"]}";
+			Console.WriteLine(@"///////////////////////////////////////////////////////////");
+			Console.WriteLine($"//         WWII Double XP code generator by { ConfigurationManager.AppSettings["creator"]}       //");
+			Console.WriteLine($"//                  Twitter: { ConfigurationManager.AppSettings["twitter"]}                  //");
+			Console.WriteLine("//          This program is FREE and open source!        //");
+			Console.WriteLine("//              If you paid, request a refund!           //");
+			Console.WriteLine("//      https://github.com/Tustin/BlazinRewardsBot       //");
+			Console.WriteLine(@"///////////////////////////////////////////////////////////");
+			Console.WriteLine();
 			Console.Write("How many codes do you want to generate? ");
 
 			if (!int.TryParse(Console.ReadLine(), out int amount))
@@ -34,10 +41,11 @@ namespace blazinrewards
 				goto wait;
 			}
 
+			Console.WriteLine($"Generating {amount} codes...");
 			var emails = new List<string>();
 			var codes = new List<string>();
 
-			for (int i = 0; i < amount; i++)
+			for (int i = 0; i <= amount; i++)
 			{
 				using (HttpClient client = new HttpClient())
 				{
@@ -63,9 +71,10 @@ namespace blazinrewards
 				{
 					var code = GetCodeFromEmail(email);
 					Console.WriteLine($"{email}'s CODE: { code ?? "Unable to fetch" }");
+					writer.WriteLine($"{email}: {code ?? "Unable to fetch"}");
+
 					if (code != null)
 					{
-						writer.WriteLine($"{email}: {code}");
 						codes.Add(code);
 					}
 					Thread.Sleep(5000);
@@ -73,11 +82,12 @@ namespace blazinrewards
 
 				writer.Close();
 			}
+
 			handle.Close();
 
 			Console.Write("Try to redeem codes automatically? (y/n): ");
-			if (Console.ReadLine() == "n") goto wait;
-			Console.Write("Enter Activision username: ");
+			if (Console.ReadKey().Key == ConsoleKey.N) goto wait;
+			Console.Write("\r\nEnter Activision username: ");
 			var username = Console.ReadLine();
 			Console.Write("Enter Activision password: ");
 			var password = Console.ReadLine();
@@ -106,7 +116,7 @@ namespace blazinrewards
 
 
 			wait:
-			Console.WriteLine("I AM DONE!");
+			Console.WriteLine("\r\nI AM DONE!");
 			Console.ReadLine();
 		}
 
@@ -161,6 +171,11 @@ namespace blazinrewards
 				var doc = new HtmlDocument();
 				doc.LoadHtml(html);
 
+				if (response.StatusCode != HttpStatusCode.OK)
+				{
+					return null;
+				}
+
 				var subjects = doc.DocumentNode.SelectNodes("//a[@class='title-subject']");
 				if (subjects == null)
 				{
@@ -168,13 +183,18 @@ namespace blazinrewards
 				}
 
 				var codEmail = subjects.Where(a => a.InnerText.Contains("Call of")).FirstOrDefault();
-
 				if (codEmail == null)
 				{
 					return null;
 				}
 
 				response = client.GetAsync(codEmail.Attributes["href"].Value).Result;
+
+				if (response.StatusCode != HttpStatusCode.OK)
+				{
+					return null;
+				}
+
 				doc.LoadHtml(response.Content.ReadAsStringAsync().Result);
 
 				//The email is retarded so try some hack here
@@ -201,9 +221,11 @@ namespace blazinrewards
 
 			if (postRespJson.type != "success")
 			{
-				Console.WriteLine($"Failed redeeming 2xp code: {postRespJson.message}");
+				Console.WriteLine($"\tFailed redeeming 2xp code: {postRespJson.message}");
 				return false;
 			}
+
+			Console.WriteLine("\tGot code! (check email)");
 
 			return true;
 		}
@@ -232,9 +254,11 @@ namespace blazinrewards
 
 			if (postRespJson.type != "success")
 			{
-				Console.WriteLine($"Failed saving survey: {postRespJson.message}");
+				Console.WriteLine($"\tFailed saving survey: {postRespJson.message}");
 				return false;
 			}
+
+			Console.WriteLine("\tCompleted survey");
 
 			return true;
 		}
@@ -280,7 +304,7 @@ namespace blazinrewards
 				return false;
 			}
 
-			Console.WriteLine($"Email: {email}, Password: 9yIoYwh5GOZu8ki");
+			Console.WriteLine($"Created account: {email}");
 
 			return true;
 		}
@@ -289,12 +313,12 @@ namespace blazinrewards
 		{
 			var rand = new Random();
 
-			return $"(213) {rand.Next(100, 999)}-{rand.Next(1000, 9999)}";
+			return $"(214) {rand.Next(100, 999)}-{rand.Next(1000, 9999)}";
 		}
 
 		static string GenerateEmail(string domain = "zhorachu.com")
 		{
-			return $"{Guid.NewGuid().ToString().Replace("-", string.Empty).Substring(0, 8)}@{domain}";
+			return $"{Guid.NewGuid().ToString().Replace("-", string.Empty).Substring(0, 9)}@{domain}";
 		}
 	}
 }
