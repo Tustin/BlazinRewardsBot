@@ -24,10 +24,10 @@ namespace blazinrewards
 
 		static void Main(string[] args)
 		{
-			Console.Title = $"WWII Double XP Generator by { ConfigurationManager.AppSettings["creator"]} - Twitter { ConfigurationManager.AppSettings["twitter"]}";
+			Console.Title = $"WWII Double XP Generator by Tustin - Twitter @Tusticles";
 			Console.WriteLine(@"///////////////////////////////////////////////////////////");
-			Console.WriteLine($"//         WWII Double XP code generator by { ConfigurationManager.AppSettings["creator"]}       //");
-			Console.WriteLine($"//                  Twitter: { ConfigurationManager.AppSettings["twitter"]}                  //");
+			Console.WriteLine($"//         WWII Double XP code generator by Tustin       //");
+			Console.WriteLine($"//                  Twitter: @Tusticles                  //");
 			Console.WriteLine("//          This program is FREE and open source!        //");
 			Console.WriteLine("//              If you paid, request a refund!           //");
 			Console.WriteLine("//      https://github.com/Tustin/BlazinRewardsBot       //");
