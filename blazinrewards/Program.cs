@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Net.Http.Headers;
 
 namespace blazinrewards
 {
@@ -19,9 +20,18 @@ namespace blazinrewards
 		const string SURVEY_URL = "https://blazinrewards.com/Profile/ProfileSurveys/Survey";
 		const string REDEEM_URL = "https://blazinrewards.com/Reward/Reward/RedeemReward";
 
-		static void Main(string[] args)
+		static readonly Uri baseAddress = new Uri("https://blazinrewards.com");
+
+		enum MenuSelection
 		{
-			Console.Title = $"WWII Double XP Generator by Tustin - Twitter @Tusticles";
+			Generate,
+			Fetch,
+			Exit
+		};
+
+		static void ClearRestore()
+		{
+			Console.Clear();
 			Console.WriteLine(@"///////////////////////////////////////////////////////////");
 			Console.WriteLine($"//         WWII Double XP code generator by Tustin       //");
 			Console.WriteLine($"//                  Twitter: @Tusticles                  //");
@@ -30,91 +40,151 @@ namespace blazinrewards
 			Console.WriteLine("//      https://github.com/Tustin/BlazinRewardsBot       //");
 			Console.WriteLine(@"///////////////////////////////////////////////////////////");
 			Console.WriteLine();
-			Console.Write("How many codes do you want to generate? ");
+		}
 
-			if (!int.TryParse(Console.ReadLine(), out int amount))
+		static MenuSelection Menu()
+		{
+			Console.WriteLine("1) Generate double xp codes");
+			Console.WriteLine("2) Fetch double xp codes from emails.txt");
+			Console.WriteLine("3) Quit");
+			while (true)
+			{
+				Console.Write("Choose an option: ");
+				var selection = Console.ReadKey().Key;
+				switch (selection)
+				{
+					case ConsoleKey.D1:
+					case ConsoleKey.NumPad1:
+					return MenuSelection.Generate;
+					case ConsoleKey.D2:
+					case ConsoleKey.NumPad2:
+					return MenuSelection.Fetch;
+					case ConsoleKey.D3:
+					case ConsoleKey.NumPad3:
+					return MenuSelection.Exit;
+				}
+			}
+		}
+
+		static List<string> Generate()
+		{
+			Console.Write("\r\nHow many codes do you want to generate? ");
+
+			if (!int.TryParse(Console.ReadLine(), out int amount) || amount <= 0)
 			{
 				Console.WriteLine("Invalid amount");
-				goto wait;
+				return null;
 			}
 
-			Console.WriteLine($"Generating {amount} codes...");
 			var emails = new List<string>();
-			var codes = new List<string>();
+			var message = $"Generating {amount} code";
+			message += amount > 1 ? "s..." : "...";
+			Console.WriteLine(message);
 
-			for (int i = 0; i <= amount; i++)
-			{
-				using (HttpClient client = new HttpClient())
-				{
-					//Im a good programmer!!
-					if (RegisterAccount(client, out string email)
-						&& DoSurvey(client)
-						&& GimmeCode(client))
-					{
-						emails.Add(email);
-					}
-				}
-			}
-
-			Console.WriteLine("Trying to grab codes... (~15 seconds)");
-			Thread.Sleep(15000);
-
-			var handle = File.Open("codes.txt", FileMode.OpenOrCreate | FileMode.Append);
-
+			using (var handle = File.Open("emails.txt", FileMode.OpenOrCreate | FileMode.Append))
 			using (var writer = new StreamWriter(handle))
 			{
-				//Let's look up the emails now that they've had time to send
-				foreach (var email in emails)
+				for (int i = 1; i <= amount; i++)
 				{
-					var code = GetCodeFromEmail(email);
-					Console.WriteLine($"{email}'s CODE: { code ?? "Unable to fetch" }");
-					writer.WriteLine($"{email}: {code ?? "Unable to fetch"}");
+					Console.WriteLine();
+					var account = RegisterAccount();
 
-					if (code != null)
+					if (account is null)
 					{
-						codes.Add(code);
+						Console.WriteLine("Failed making account");
+						continue;
 					}
-					Thread.Sleep(5000);
-				}
 
-				writer.Close();
-			}
+					Console.WriteLine($"Created {account.Username}");
 
-			handle.Close();
-
-			Console.Write("Try to redeem codes automatically? (y/n): ");
-			if (Console.ReadKey().Key == ConsoleKey.N) goto wait;
-			Console.Write("\r\nEnter Activision username: ");
-			var username = Console.ReadLine();
-			Console.Write("Enter Activision password: ");
-			var password = Console.ReadLine();
-
-			using (HttpClient client = new HttpClient())
-			{
-				//Visit to get the cookies
-				var aa = client.GetAsync("https://profile.callofduty.com/cod/login").Result;
-				if (CodLogin(client, username, password))
-				{
-					Console.WriteLine("Successfully logged into COD website!");
-					Console.WriteLine($"\r\nTrying to redeem {codes.Count} codes NOW");
-					foreach (var code in codes)
+					if (DoSurvey(account))
 					{
-						if (TryRedeeming(client, code))
+						Console.WriteLine("\tCompleted survey");
+					}
+					else
+					{
+						Console.WriteLine("\tSurvey failed");
+						continue;
+					}
+
+					var accountPoints = Points.GetPoints(account).PointsBalance[0]?.PointAmount;
+
+					if (accountPoints is null)
+					{
+						Console.WriteLine("\tFailed fetching account points");
+						continue;
+					}
+					else if (accountPoints < 50)
+					{
+						Console.WriteLine("\tAccount doesn't have at least 50 points for the code");
+					}
+
+					Console.WriteLine($"\tSpending {accountPoints} points");
+
+					for (int j = 0; j < accountPoints / 50; j++)
+					{
+						if (GimmeCode(account))
 						{
-							Console.WriteLine($"REDEEMED CODE: {code}");
+							Console.WriteLine("\tRedeemed 2xp code");
 						}
 						else
 						{
-							Console.WriteLine($"FAILED redeeming {code}. Invalid or maybe limit reached?");
+							Console.WriteLine("\tFailed redeeming 2xp code");
 						}
 					}
+
+					emails.Add(account.Username);
+					writer.WriteLine(account.Username);
 				}
+
+				writer.Close();
+				handle.Close();
 			}
 
+			return emails;
+		}
 
-			wait:
-			Console.WriteLine("\r\nI AM DONE!");
-			Console.ReadLine();
+		private static void Fetch()
+		{
+			using (var codesHandle = File.Open("codes.txt", FileMode.OpenOrCreate | FileMode.Append))
+			using (var emailHandle = File.Open("emails.txt", FileMode.Open))
+			using (var emailReader = new StreamReader(emailHandle))
+			using (var codesWriter = new StreamWriter(codesHandle))
+			{
+				string account;
+				while ((account = emailReader.ReadLine()) != null)
+				{
+					var e = account.Trim();
+					Console.WriteLine($"\r\nTrying {e}");
+
+					var mail = new GuerrillaMail(e);
+					var mailList = mail.GetMail();
+
+					var blazinRewardsEmails = mailList.list.Where(a => a.mail_from.Equals("blazinrewards@emails.buffalowildwings.com"))
+						.Where(b => b.mail_subject.Contains("2XP"));
+
+					if (blazinRewardsEmails is null)
+					{
+						Console.WriteLine("\tFailed fetching codes");
+						continue;
+					}
+
+					foreach (var email in blazinRewardsEmails)
+					{
+						var emailContents = mail.FetchEmail(email.mail_id).mail_body;
+						var code = Regex.Match(emailContents, @"[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}");
+						if (code is null) continue;
+
+						codesWriter.WriteLine(code.Value);
+						Console.WriteLine(code.Value);
+					}
+
+				}
+				codesWriter.Close();
+				emailReader.Close();
+				codesHandle.Close();
+				emailHandle.Close();
+			}
 		}
 
 		static bool CodLogin(HttpClient client, string username, string password)
@@ -155,7 +225,50 @@ namespace blazinrewards
 			return success != null;
 		}
 
-		static string GetCodeFromEmail(string email)
+		/*
+		static List<string> GetCodesFromEmail(string emailAddress)
+		{
+			var codes = new List<string>();
+			using (HttpClient client = new HttpClient())
+			{
+				if (emailAddress.Contains("@")) emailAddress = emailAddress.Split('@')[0];
+
+				var mailResponse = client.GetAsync($"http://www.yopmail.com/en/inbox.php?login={emailAddress}&p=r&d=&ctrl=&scrl=&spam=true&yf=115&v=2.7&r_c=&id=").Result;
+
+				var doc = new HtmlDocument();
+				doc.LoadHtml(mailResponse.Content.ReadAsStringAsync().Result);
+				File.WriteAllText("aaa.html", mailResponse.Content.ReadAsStringAsync().Result);
+
+				var emails = doc.DocumentNode.SelectNodes("//a[@class='lm']");
+				if (emails is null) return null;
+
+				var codEmails = emails.Where(a => a.ChildNodes[1].InnerText.Contains("2XP"));
+				if (codEmails is null) return null;
+
+				//Don't even ask
+				var iHateHtmlAgilityPack = new List<string>();
+				codEmails.ToList().ForEach(a => iHateHtmlAgilityPack.Add(a.Attributes["href"].Value));
+
+				foreach (var url in iHateHtmlAgilityPack)
+				{
+					var @base = "http://www.yopmail.com/en/";
+					var mail = client.GetAsync($"{@base}{url}").Result;
+					if (mail.StatusCode != HttpStatusCode.OK) continue;
+
+					doc.LoadHtml(mail.Content.ReadAsStringAsync().Result);
+					var code = doc.DocumentNode.SelectNodes("//td").ToList().LastOrDefault(a => Regex.IsMatch(a.InnerText, @"[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}"));
+					if (code is null) continue;
+
+					codes.Add(code.InnerText.Trim());
+				}
+
+			}
+			return codes;
+		}
+		*/
+
+		/*
+		static List<string> GetCodesFromEmail(string email)
 		{
 			var baseAddress = new Uri("https://temp-mail.org/en/");
 			var cookieContainer = new CookieContainer();
@@ -179,143 +292,243 @@ namespace blazinrewards
 					return null;
 				}
 
-				var codEmail = subjects.Where(a => a.InnerText.Contains("Call of")).FirstOrDefault();
-				if (codEmail == null)
+				var codEmails = subjects.Where(a => a.InnerText.Contains("Call of"));
+
+				if (codEmails == null)
 				{
 					return null;
 				}
 
-				response = client.GetAsync(codEmail.Attributes["href"].Value).Result;
+				var codes = new List<string>();
+				foreach (var codEmail in codEmails)
+				{
+					response = client.GetAsync(codEmail.Attributes["href"].Value).Result;
 
+					if (response.StatusCode != HttpStatusCode.OK)
+					{
+						return null;
+					}
+
+					doc.LoadHtml(response.Content.ReadAsStringAsync().Result);
+
+					//The email is retarded so try some hack here
+					var code = doc.DocumentNode.SelectNodes("//td").ToList().LastOrDefault(a => Regex.IsMatch(a.InnerText, @"[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}"));
+
+					codes.Add(code.InnerText.Trim());
+				}
+
+				return codes;
+			}
+
+		}
+		*/
+
+		static bool GimmeCode(Account account)
+		{
+			var url = $"https://bfww-pubapi.epsilon.agilityloyalty.com/api/v1/profiles/{account.ProfileId}/rewards/certificates";
+			var form = new Dictionary<string, string>
+			{
+				{ "ProfileId", account.ProfileId },
+				{ "RewardCode", "96" },
+			};
+
+			using (HttpClient client = new HttpClient())
+			{
+				client.DefaultRequestHeaders.Add("SocialTokenProvider", account.SocialTokenProvider);
+				client.DefaultRequestHeaders.Add("Program-Code", "BDUBS");
+				client.DefaultRequestHeaders.Add("SocialTokenProvider", "password");
+				client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+				client.DefaultRequestHeaders.Add("SocialToken", account.SocialToken);
+				client.DefaultRequestHeaders.Add("Source-Application", "IOS");
+				client.DefaultRequestHeaders.Add("Accept-Language", "en-US");
+				client.DefaultRequestHeaders.Add("User-Agent", "Blazin Rewards/510 CFNetwork/887 Darwin/17.0.0");
+
+				var data = JsonConvert.SerializeObject(form);
+				var content = new StringContent(data, Encoding.UTF8, "application/json");
+				var response = client.PostAsync(url, content).Result;
+				if (response.StatusCode != HttpStatusCode.Created)
+				{
+					return false;
+				}
+
+				return true;
+			}
+		}
+
+		static bool DoSurvey(Account account)
+		{
+			var url = $"https://bfww-pubapi.epsilon.agilityloyalty.com/api/v1/profiles/{account.ProfileId}/surveys/ab959cbe-907c-4358-b941-d1a63cfe4a32";
+			var survey = new Survey()
+			{
+				ProfileId = account.ProfileId,
+				SurveyId = "ab959cbe-907c-4358-b941-d1a63cfe4a32",
+				SurveyResponses = new List<Survey.SurveyResponse>()
+				{
+					new Survey.SurveyResponse()
+					{
+						AnswerId = "a26123b5-dfcf-45f5-9923-8eb5b9e3e974",
+						ResponseDate = "2017-10-30T19:18:16.6800000Z",
+						QuestionId =  "c8d0429c-4b8d-4499-bc21-4391587d7335"
+					},
+					new Survey.SurveyResponse()
+					{
+						AnswerId = "f6796654-7008-41b5-b9ec-b31d816f5b26",
+						ResponseDate = "2017-10-30T19:18:16.6800000Z",
+						QuestionId =  "33964564-c258-42ab-9380-bb77fe801046"
+					},
+					new Survey.SurveyResponse()
+					{
+						AnswerId = "775803e6-a1c1-45fb-ba13-b1309262e24d",
+						ResponseDate = "2017-10-30T19:18:16.6800000Z",
+						QuestionId =  "bca99055-6181-4e29-91b0-094f50e537ed"
+					},
+					new Survey.SurveyResponse()
+					{
+						AnswerId = "3867412c-2089-4fdc-b98a-c34b7b51c0be",
+						ResponseDate = "2017-10-30T19:18:16.6800000Z",
+						QuestionId =  "333d0f09-240b-46db-946c-a2170a3dbfe6"
+					},
+					new Survey.SurveyResponse()
+					{
+						AnswerId = "348c12b6-d5f4-4c07-96a9-395ae3c07bc5",
+						ResponseDate = "2017-10-30T19:18:16.6800000Z",
+						QuestionId =  "2676aaae-63b7-4cc4-907a-094d49a09d24"
+					},
+				}
+			};
+
+			using (HttpClient client = new HttpClient())
+			{
+				client.DefaultRequestHeaders.Add("SocialTokenProvider", account.SocialTokenProvider);
+				client.DefaultRequestHeaders.Add("Program-Code", "BDUBS");
+				client.DefaultRequestHeaders.Add("SocialTokenProvider", "password");
+				client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", account.AccessToken);
+				client.DefaultRequestHeaders.Add("SocialToken", account.SocialToken);
+				client.DefaultRequestHeaders.Add("Source-Application", "IOS");
+				client.DefaultRequestHeaders.Add("Accept-Language", "en-US");
+				client.DefaultRequestHeaders.Add("User-Agent", "Blazin Rewards/510 CFNetwork/887 Darwin/17.0.0");
+
+				var data = JsonConvert.SerializeObject(survey);
+				var content = new StringContent(data, Encoding.UTF8, "application/json");
+				var response = client.PutAsync(url, content).Result;
 				if (response.StatusCode != HttpStatusCode.OK)
 				{
-					return null;
+					return false;
 				}
 
-				doc.LoadHtml(response.Content.ReadAsStringAsync().Result);
-
-				//The email is retarded so try some hack here
-				var code = doc.DocumentNode.SelectNodes("//td").ToList().LastOrDefault(a => Regex.IsMatch(a.InnerText, @"[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}"));
-
-				return code.InnerText.Trim();
+				return true;
 			}
-
 		}
 
-		private static bool GimmeCode(HttpClient client)
+		static Account RegisterAccount()
 		{
-			var form = new Dictionary<string, string>
+			var email = GenerateEmail();
+
+			using (HttpClient client = new HttpClient())
+			{
+				var request = new BWW()
 				{
-					{ "rewardCode", "96" },
+					GlobalOptOut = false,
+					FirstName = "Bob",
+					EnrollChannelCode = "IOS",
+					LastName = "Smith",
+					Username = email,
+					Emails = new List<BWW.Email>()
+				{
+					new BWW.Email() { EmailAddress =  email }
+				},
+					BirthDate = "1980-10-14T22:00:00Z",
+					Password = "9yIoYwh5GOZu8ki",
+					Phones = new List<BWW.Phone>()
+				{
+					new BWW.Phone() { PhoneNumber = GeneratePhone()}
+				},
+					Addresses = new List<BWW.Address>()
+				{
+					new BWW.Address() { PostalCode = "90002" }
+				},
+					SourceCode = "WEB"
 				};
 
-			client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36");
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+				var data = JsonConvert.SerializeObject(request);
+				var content = new StringContent(data, Encoding.UTF8, "application/json");
 
-			var content = new FormUrlEncodedContent(form);
-			var postResp = client.PostAsync(REDEEM_URL, content).Result;
-			dynamic postRespJson = JsonConvert.DeserializeObject(postResp.Content.ReadAsStringAsync().Result);
+				client.DefaultRequestHeaders.Add("User-Agent", "Blazin Rewards/510 CFNetwork/887 Darwin/17.0.0");
+				client.DefaultRequestHeaders.Add("Program-Code", "BDUBS");
+				client.DefaultRequestHeaders.Add("Source-Application", "IOS");
+				client.DefaultRequestHeaders.Add("Accept-Language", "en-US");
+				client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "TU9CQVBJX1BVQkxJQ19VU0VSOk0wOEBwMVB1OGwhYw==");
 
-			if (postRespJson.type != "success")
-			{
-				Console.WriteLine($"\tFailed redeeming 2xp code: {postRespJson.message}");
-				return false;
-			}
+				var resp = client.PostAsync("https://bfww-pubapi.epsilon.agilityloyalty.com/api/v1/profiles", content).Result;
+				dynamic respData = JsonConvert.DeserializeObject(resp.Content.ReadAsStringAsync().Result);
 
-			Console.WriteLine("\tGot code! (check email)");
-
-			return true;
-		}
-
-		static bool DoSurvey(HttpClient client)
-		{
-			//We need this csrf token for the requests
-			var resp = client.GetAsync(SURVEY_URL).Result.Content.ReadAsStringAsync().Result;
-
-			var doc = new HtmlDocument();
-			doc.LoadHtml(resp);
-
-			var csrfToken = doc.DocumentNode.SelectNodes("//input[@name='__RequestVerificationToken']").FirstOrDefault().Attributes["value"].Value;
-
-			//Disregard
-			var content = WebUtility.UrlEncode("surveyResponseList[0][QuestionId]=33964564-c258-42ab-9380-bb77fe801046&surveyResponseList[0][ResponseTypeCode]=Checkbox&surveyResponseList[0][AnswersC][0][AnswerId]=a14f86bf-6f4b-4d0b-90ae-9603e1913f07&surveyResponseList[0][AnswersC][0][SurveyQuestionAnswerId]=&surveyResponseList[0][AnswersC][0][SurveyTextResponse]=&surveyResponseList[0][AnswersC][0][ProfileCheckListAnswers][0][answerId]=352fbaf3-9463-4a9a-b531-d0cd2a420783&surveyResponseList[0][AnswersC][0][ProfileCheckListAnswers][0][surveyQuestionAnswerId]=33964564-c258-42ab-9380-bb77fe801046352fbaf3-9463-4a9a-b531-d0cd2a420783&surveyResponseList[0][AnswersC][0][ProfileCheckListAnswers][1][answerId]=a14f86bf-6f4b-4d0b-90ae-9603e1913f07&surveyResponseList[0][AnswersC][0][ProfileCheckListAnswers][1][surveyQuestionAnswerId]=33964564-c258-42ab-9380-bb77fe801046a14f86bf-6f4b-4d0b-90ae-9603e1913f07&surveyResponseList[1][QuestionId]=c8d0429c-4b8d-4499-bc21-4391587d7335&surveyResponseList[1][ResponseTypeCode]=Checkbox&surveyResponseList[1][AnswersC][0][AnswerId]=ad27aafa-d688-4a70-a942-a12f714a9783&surveyResponseList[1][AnswersC][0][SurveyQuestionAnswerId]=&surveyResponseList[1][AnswersC][0][SurveyTextResponse]=&surveyResponseList[1][AnswersC][0][ProfileCheckListAnswers][0][answerId]=ad27aafa-d688-4a70-a942-a12f714a9783&surveyResponseList[1][AnswersC][0][ProfileCheckListAnswers][0][surveyQuestionAnswerId]=c8d0429c-4b8d-4499-bc21-4391587d7335ad27aafa-d688-4a70-a942-a12f714a9783&surveyResponseList[2][QuestionId]=2676aaae-63b7-4cc4-907a-094d49a09d24&surveyResponseList[2][ResponseTypeCode]=Drop-down (multi)&surveyResponseList[2][AnswersC][0][AnswerId]=dd41e6a7-8348-4fee-b52b-761078052f2b&surveyResponseList[2][AnswersC][0][SurveyQuestionAnswerId]=&surveyResponseList[2][AnswersC][0][SurveyTextResponse]=&surveyResponseList[2][AnswersC][0][ProfileCheckListAnswers][0][answerId]=dd41e6a7-8348-4fee-b52b-761078052f2b&surveyResponseList[2][AnswersC][0][ProfileCheckListAnswers][0][surveyQuestionAnswerId]=2676aaae-63b7-4cc4-907a-094d49a09d24dd41e6a7-8348-4fee-b52b-761078052f2b&surveyResponseList[3][QuestionId]=bca99055-6181-4e29-91b0-094f50e537ed&surveyResponseList[3][ResponseTypeCode]=Drop-down (multi)&surveyResponseList[3][AnswersC][0][AnswerId]=45f7a30d-0b88-440e-b08c-4a945d2a833e&surveyResponseList[3][AnswersC][0][SurveyQuestionAnswerId]=&surveyResponseList[3][AnswersC][0][SurveyTextResponse]=&surveyResponseList[3][AnswersC][0][ProfileCheckListAnswers][0][answerId]=45f7a30d-0b88-440e-b08c-4a945d2a833e&surveyResponseList[3][AnswersC][0][ProfileCheckListAnswers][0][surveyQuestionAnswerId]=bca99055-6181-4e29-91b0-094f50e537ed45f7a30d-0b88-440e-b08c-4a945d2a833e&surveyResponseList[4][QuestionId]=333d0f09-240b-46db-946c-a2170a3dbfe6&surveyResponseList[4][ResponseTypeCode]=Drop-down (multi)&surveyResponseList[4][AnswersC][0][AnswerId]=3867412c-2089-4fdc-b98a-c34b7b51c0be&surveyResponseList[4][AnswersC][0][SurveyQuestionAnswerId]=&surveyResponseList[4][AnswersC][0][SurveyTextResponse]=&surveyResponseList[4][AnswersC][0][ProfileCheckListAnswers][0][answerId]=3867412c-2089-4fdc-b98a-c34b7b51c0be&surveyResponseList[4][AnswersC][0][ProfileCheckListAnswers][0][surveyQuestionAnswerId]=333d0f09-240b-46db-946c-a2170a3dbfe63867412c-2089-4fdc-b98a-c34b7b51c0be&surveyId=ab959cbe-907c-4358-b941-d1a63cfe4a32&__RequestVerificationToken=" + csrfToken).Replace("%26", "&").Replace("%3D", "="); //Hack here at the end cuz C#
-
-
-			client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36");
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-
-			var postResp = client.PostAsync(SURVEY_POST_URL, new StringContent(content, Encoding.UTF8, "application/x-www-form-urlencoded")).Result;
-			var data = postResp.Content.ReadAsStringAsync().Result;
-
-			dynamic postRespJson = JsonConvert.DeserializeObject(postResp.Content.ReadAsStringAsync().Result);
-
-			if (postRespJson.type != "success")
-			{
-				Console.WriteLine($"\tFailed saving survey: {postRespJson.message}");
-				return false;
-			}
-
-			Console.WriteLine("\tCompleted survey");
-
-			return true;
-		}
-
-		static bool RegisterAccount(HttpClient client, out string email)
-		{
-			//We need this csrf token for the requests
-			var resp = client.GetAsync(REGISTER_URL).Result.Content.ReadAsStringAsync().Result;
-
-			var doc = new HtmlDocument();
-			doc.LoadHtml(resp);
-
-			var csrfToken = doc.DocumentNode.SelectNodes("//input[@name='__RequestVerificationToken']").FirstOrDefault().Attributes["value"].Value;
-
-			email = GenerateEmail();
-
-			var form = new Dictionary<string, string>
+				if (resp.StatusCode != HttpStatusCode.Created)
 				{
-					{ "__RequestVerificationToken", csrfToken },
-					{ "FirstName", "Bob" },
-					{ "LastName", "Smith" },
-					{ "Address.PostalCode", "90002" },
-					{"Phone.PhoneNumber", GeneratePhone() },
-					{"Username", email },
-					{"DOBMonth", "10" },
-					{"DOBYear", "1980" },
-					{"Password", "9yIoYwh5GOZu8ki" },
-					{"ConfirmPassword", "9yIoYwh5GOZu8ki" },
-					{"terms", "on" },
-					{"hiddenzipcode", "" },
+					Console.WriteLine($"Failed making account: {respData.Message}");
+					return null;
+				}
+			}
+
+			using (HttpClient client = new HttpClient())
+			{
+				var form = new Dictionary<string, string>
+				{
+					{ "grant_type", "password" },
+					{ "username", email },
+					{ "password", "9yIoYwh5GOZu8ki" },
+					{ "response_type", "token" }
 				};
 
-			client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36");
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+				client.DefaultRequestHeaders.Add("User-Agent", "Blazin Rewards/510 CFNetwork/887 Darwin/17.0.0");
+				client.DefaultRequestHeaders.Add("Program-Code", "BDUBS");
+				client.DefaultRequestHeaders.Add("Source-Application", "IOS");
+				client.DefaultRequestHeaders.Add("Accept-Language", "en-US");
+				client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "TU9CQVBJX1BVQkxJQ19VU0VSOk0wOEBwMVB1OGwhYw==");
 
-			var content = new FormUrlEncodedContent(form);
-			var postResp = client.PostAsync(REGISTER_URL, content).Result;
-			dynamic postRespJson = JsonConvert.DeserializeObject(postResp.Content.ReadAsStringAsync().Result);
-
-			if (postRespJson.type != "success")
-			{
-				Console.WriteLine($"Failed making account: {postRespJson.message}");
-				return false;
+				var content = new FormUrlEncodedContent(form);
+				var resp = client.PostAsync("https://bfww-pubapi.epsilon.agilityloyalty.com/api/v1/authorization/profiles/tokens", content).Result;
+				var data = JsonConvert.DeserializeObject<Account>(resp.Content.ReadAsStringAsync().Result);
+				return data;
 			}
 
-			Console.WriteLine($"Created account: {email}");
-
-			return true;
 		}
 
 		static string GeneratePhone()
 		{
 			var rand = new Random();
 
-			return $"(214) {rand.Next(100, 999)}-{rand.Next(1000, 9999)}";
+			return $"214{rand.Next(1000000, 9999999)}";
 		}
 
-		static string GenerateEmail(string domain = "zhorachu.com")
+		static string GenerateEmail(string domain = "sharklasers.com")
 		{
-			return $"{Guid.NewGuid().ToString().Replace("-", string.Empty).Substring(0, 9)}@{domain}";
+			return $"{Guid.NewGuid().ToString().Replace("-", string.Empty).Substring(0, 12)}@{domain}";
 		}
+
+		static void Main(string[] args)
+		{
+			Console.Title = $"WWII Double XP Generator by Tustin - Twitter @Tusticles";
+
+			while (true)
+			{
+				ClearRestore();
+				var option = Menu();
+
+				switch (option)
+				{
+					case MenuSelection.Generate:
+					Generate();
+					break;
+					case MenuSelection.Fetch:
+					Fetch();
+					break;
+					case MenuSelection.Exit:
+					return;
+				}
+				Console.WriteLine("\r\nPress any key to return to menu");
+				Console.ReadLine();
+			}
+		}
+
 	}
 }
